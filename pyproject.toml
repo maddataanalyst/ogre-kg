@@ -1,0 +1,58 @@
+[build-system]
+requires = ["hatchling>=1.25.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "ogre-kg-private"
+version = "0.1.0"
+description = "Ontology-Grounded Retrieval & Enrichment for Knowledge Graphs"
+readme = "README.md"
+requires-python = ">=3.13"
+authors = [
+    { name = "Filip Wójcik", email = "ds@filip-wojcik.com" },
+]
+dependencies = [
+    "llama-index>=0.14.14",
+    "llama-index-embeddings-huggingface>=0.6.1",
+    "llama-index-graph-stores-memgraph>=0.4.1",
+    "rapidfuzz>=3.0.0",
+    "tqdm>=4.67.3",
+]
+
+[project.optional-dependencies]
+neo4j = ["llama-index-graph-stores-neo4j>=0.4.0"]
+
+[dependency-groups]
+dev = [
+    "mypy>=1.16.1",
+    "pre-commit>=4.2.0",
+    "pytest>=8.3.5",
+    "pytest-asyncio>=1.1.0",
+    "ruff>=0.12.7",
+]
+research = [
+    "autoroot>=1.0.1",
+    "ipykernel>=7.2.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+asyncio_mode = "auto"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/ogre_kg"]
+
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W", "UP", "B", "SIM"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["ogre_kg"]
+
+[tool.mypy]
+python_version = "3.13"
+warn_return_any = true
+warn_unused_configs = true
