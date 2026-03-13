@@ -18,6 +18,16 @@ class FakeStructuredStore:
     supports_structured_queries: bool = True
     similarity_pairs: list[dict] = field(default_factory=list)
     merge_result: list[dict] = field(default_factory=lambda: [{"node": {"name": "merged"}}])
+    synonym_result: list[dict] = field(
+        default_factory=lambda: [
+            {
+                "entities": ["A", "B"],
+                "relationship_type": "SIMILAR_TO",
+                "bidirectional": False,
+                "relationships_created": 1,
+            }
+        ]
+    )
 
     def __post_init__(self) -> None:
         self.queries: list[str] = []
@@ -28,6 +38,8 @@ class FakeStructuredStore:
             return self.similarity_pairs
         if "refactor.merge_nodes" in query or "apoc.refactor.mergeNodes" in query:
             return self.merge_result
+        if "relationships_created" in query and "relationship_type" in query:
+            return self.synonym_result
         return []
 
     async def astructured_query(self, query: str) -> list[dict]:

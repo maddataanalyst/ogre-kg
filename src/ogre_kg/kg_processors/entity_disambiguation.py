@@ -12,12 +12,12 @@ class EntityDisambiguationProcessor:
     """Composable entity disambiguation processor.
 
     Combines any ``EntitySimilarityFinder`` with any ``EntityMerger``.
-    The ``process()`` method runs the full find-then-merge pipeline.
+    The ``process()`` method runs the full find-then-process pipeline.
 
     This design allows mixing any finder with any merger, for example:
     - ``FuzzyEntitySimilarityFinder`` + ``Neo4jEntityMerger``
-    - ``MemgraphCypherEntitySimilarityFinder`` + ``MemgraphEntityMerger``
-    - ``Neo4jGDSEntitySimilarityFinder`` + ``Neo4jEntityMerger``
+    - ``MemgraphCypherEntitySimilarityFinder`` + ``MemgraphSynonymCreator``
+    - ``Neo4jGDSEntitySimilarityFinder`` + ``Neo4jSynonymCreator``
 
     Each backend-specific finder and merger validates its own graph store
     at init time, so invalid combinations fail early.
@@ -27,7 +27,8 @@ class EntityDisambiguationProcessor:
     similarity_finder
         Component responsible for finding groups of similar entities.
     merger
-        Component responsible for merging entity groups in the graph store.
+        Component responsible for applying the chosen group-processing strategy
+        in the graph store.
     """
 
     def __init__(
@@ -39,12 +40,12 @@ class EntityDisambiguationProcessor:
         self.merger = merger
 
     def process(self) -> list[dict[str, Any]]:
-        """Run end-to-end disambiguation: find similar entities, then merge.
+        """Run end-to-end disambiguation: find similar entities, then process.
 
         Returns
         -------
         list[dict[str, Any]]
-            Merge results from the backend.
+            Backend results from the configured merger.
         """
         entity_groups = self.similarity_finder.find_similar_entities()
         return self.merger.merge_entities(entity_groups)

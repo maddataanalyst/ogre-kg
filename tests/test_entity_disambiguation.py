@@ -6,7 +6,12 @@ import pytest
 from conftest import FakeIndex, FakeMemgraphStore, FakeNeo4jStore, FakeStructuredStore
 
 from ogre_kg.kg_processors.entity_disambiguation import EntityDisambiguationProcessor
-from ogre_kg.kg_processors.entity_merger import MemgraphEntityMerger, Neo4jEntityMerger
+from ogre_kg.kg_processors.entity_merger import (
+    MemgraphEntityMerger,
+    MemgraphSynonymCreator,
+    Neo4jEntityMerger,
+    Neo4jSynonymCreator,
+)
 from ogre_kg.kg_processors.entity_similarity_finders import (
     MemgraphCypherEntitySimilarityFinder,
     Neo4jGDSEntitySimilarityFinder,
@@ -43,15 +48,23 @@ class TestResolveGraphStore:
 
 
 class TestEntityDisambiguationProcessorComposition:
-    def test_memgraph_finder_with_memgraph_merger(self):
+    def test_memgraph_finder_with_memgraph_synonym_creator(self):
         # given
         store = FakeMemgraphStore(
             similarity_pairs=[
                 {"name1": "A", "name2": "B", "similarity": 0.9},
-            ]
+            ],
+            synonym_result=[
+                {
+                    "entities": ["A", "B"],
+                    "relationship_type": "SIMILAR_TO",
+                    "bidirectional": False,
+                    "relationships_created": 1,
+                }
+            ],
         )
         finder = MemgraphCypherEntitySimilarityFinder(source=store, embedding_attr="embedding")
-        merger = MemgraphEntityMerger(source=store, preview_changes=False)
+        merger = MemgraphSynonymCreator(source=store, preview_changes=False)
         processor = EntityDisambiguationProcessor(similarity_finder=finder, merger=merger)
 
         # when
@@ -59,18 +72,27 @@ class TestEntityDisambiguationProcessorComposition:
 
         # then
         assert len(result) == 1
+        assert result[0]["relationship_type"] == "SIMILAR_TO"
         assert "node_similarity.cosine" in store.queries[0]
-        assert any("refactor.merge_nodes" in q for q in store.queries)
+        assert any("[:SIMILAR_TO]" in q for q in store.queries)
 
-    def test_neo4j_finder_with_neo4j_merger(self):
+    def test_neo4j_finder_with_neo4j_synonym_creator(self):
         # given
         store = FakeNeo4jStore(
             similarity_pairs=[
                 {"name1": "X", "name2": "Y", "similarity": 0.95},
-            ]
+            ],
+            synonym_result=[
+                {
+                    "entities": ["X", "Y"],
+                    "relationship_type": "SIMILAR_TO",
+                    "bidirectional": False,
+                    "relationships_created": 1,
+                }
+            ],
         )
         finder = Neo4jGDSEntitySimilarityFinder(source=store, embedding_attr="embedding")
-        merger = Neo4jEntityMerger(source=store, preview_changes=False)
+        merger = Neo4jSynonymCreator(source=store, preview_changes=False)
         processor = EntityDisambiguationProcessor(similarity_finder=finder, merger=merger)
 
         # when
@@ -78,8 +100,9 @@ class TestEntityDisambiguationProcessorComposition:
 
         # then
         assert len(result) == 1
+        assert result[0]["relationship_type"] == "SIMILAR_TO"
         assert "vector.similarity.cosine" in store.queries[0]
-        assert any("apoc.refactor.mergeNodes" in q for q in store.queries)
+        assert any("[:SIMILAR_TO]" in q for q in store.queries)
 
     def test_preview_mode_returns_empty(self):
         # given
@@ -89,7 +112,7 @@ class TestEntityDisambiguationProcessorComposition:
             ]
         )
         finder = MemgraphCypherEntitySimilarityFinder(source=store, embedding_attr="embedding")
-        merger = MemgraphEntityMerger(source=store, preview_changes=True)
+        merger = MemgraphSynonymCreator(source=store, preview_changes=True)
         processor = EntityDisambiguationProcessor(similarity_finder=finder, merger=merger)
 
         # when
@@ -153,3 +176,19 @@ class TestCrossBackendValidation:
         # when / then
         with pytest.raises(ValueError, match="requires a Neo4j graph store"):
             Neo4jEntityMerger(source=store)
+
+    def test_memgraph_synonym_creator_rejects_neo4j_store(self):
+        # given
+        store = FakeNeo4jStore()
+
+        # when / then
+        with pytest.raises(ValueError, match="requires a Memgraph graph store"):
+            MemgraphSynonymCreator(source=store)
+
+    def test_neo4j_synonym_creator_rejects_memgraph_store(self):
+        # given
+        store = FakeMemgraphStore()
+
+        # when / then
+        with pytest.raises(ValueError, match="requires a Neo4j graph store"):
+            Neo4jSynonymCreator(source=store)

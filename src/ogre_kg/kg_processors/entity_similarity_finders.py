@@ -83,7 +83,7 @@ ORDER BY similarity DESC"""
     def __init__(
         self,
         source: StructuredQueryCapableStore | PropertyGraphStoreProvider,
-        embedding_attr: str,
+        embedding_attr: str = "embedding",
         similarity_threshold: float = 0.5,
     ) -> None:
         super().__init__(source, similarity_threshold)
