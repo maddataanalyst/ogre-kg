@@ -4,8 +4,10 @@ from __future__ import annotations
 
 from typing import Any
 
-from ogre_kg.kg_processors.entity_merger import EntityMerger
-from ogre_kg.kg_processors.entity_similarity_finders import EntitySimilarityFinder
+from ogre_kg.kg_processors.entity_processing.entity_merger import EntityMerger
+from ogre_kg.kg_processors.entity_processing.entity_similarity_finders import (
+    EntitySimilarityFinder,
+)
 
 
 class EntityDisambiguationProcessor:

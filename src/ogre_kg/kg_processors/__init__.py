@@ -1,22 +1,14 @@
 """Public package exports for OGRE KG processors."""
 
-from ogre_kg.kg_processors.entity_disambiguation import (
-    EntityDisambiguationProcessor,
-)
-from ogre_kg.kg_processors.entity_merger import (
-    EntityMerger,
-    MemgraphEntityMerger,
-    MemgraphSynonymCreator,
-    Neo4jEntityMerger,
-    Neo4jSynonymCreator,
-    SynonymCreator,
-)
-from ogre_kg.kg_processors.entity_similarity_finders import (
-    CustomEmbeddingsSimilarityFinder,
-    EntitySimilarityFinder,
-    FuzzyEntitySimilarityFinder,
-    MemgraphCypherEntitySimilarityFinder,
-    Neo4jGDSEntitySimilarityFinder,
+from ogre_kg.kg_processors.extractors import (
+    DEFAULT_ONTO_DYNAMIC_EXTRACT_PROMPT,
+    DEFAULT_ONTO_DYNAMIC_EXTRACT_PROPS_PROMPT,
+    DEFAULT_ONTOLOGY_RELATION_TYPES,
+    ForeignKeySpec,
+    OntoDynamicLLMPathExtractor,
+    RelationColumnSpec,
+    TabularPathExtractor,
+    TabularTableSpec,
 )
 from ogre_kg.kg_processors.graph_db_utils import (
     GraphTextIndexBuilder,
@@ -27,6 +19,8 @@ from ogre_kg.kg_processors.graph_db_utils import (
     make_graph_text_index_builder,
 )
 from ogre_kg.kg_processors.retrievers import (
+    DEFAULT_CHUNK_TERMS_PROMPT,
+    DEFAULT_KEYWORD_PROMPT,
     BaseGraphKeywordRetriever,
     MemgraphChunkKeywordRetriever,
     MemgraphKeywordContextRetriever,
@@ -36,26 +30,24 @@ from ogre_kg.kg_processors.retrievers import (
 
 __all__ = [
     "BaseGraphKeywordRetriever",
-    "CustomEmbeddingsSimilarityFinder",
-    "EntityDisambiguationProcessor",
-    "EntityMerger",
-    "EntitySimilarityFinder",
-    "FuzzyEntitySimilarityFinder",
+    "DEFAULT_CHUNK_TERMS_PROMPT",
+    "DEFAULT_KEYWORD_PROMPT",
+    "DEFAULT_ONTO_DYNAMIC_EXTRACT_PROMPT",
+    "DEFAULT_ONTO_DYNAMIC_EXTRACT_PROPS_PROMPT",
+    "DEFAULT_ONTOLOGY_RELATION_TYPES",
+    "ForeignKeySpec",
     "GraphTextIndexBuilder",
     "GraphTextIndexSpec",
-    "MemgraphCypherEntitySimilarityFinder",
-    "MemgraphEntityMerger",
-    "MemgraphSynonymCreator",
     "MemgraphChunkKeywordRetriever",
     "MemgraphKeywordContextRetriever",
     "MemgraphTextIndexBuilder",
+    "OntoDynamicLLMPathExtractor",
     "Neo4jChunkKeywordRetriever",
-    "Neo4jEntityMerger",
-    "Neo4jSynonymCreator",
     "Neo4jFulltextIndexBuilder",
-    "Neo4jGDSEntitySimilarityFinder",
     "Neo4jKeywordContextRetriever",
-    "SynonymCreator",
+    "RelationColumnSpec",
+    "TabularPathExtractor",
+    "TabularTableSpec",
     "default_retriever_index_specs",
     "make_graph_text_index_builder",
 ]

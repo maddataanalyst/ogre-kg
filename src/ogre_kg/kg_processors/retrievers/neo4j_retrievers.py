@@ -4,8 +4,11 @@ from typing import Any
 
 from llama_index.core.graph_stores.types import PropertyGraphStore
 from llama_index.core.llms import LLM
+from llama_index.core.prompts import PromptTemplate
 
 from .base_retrievers import (
+    DEFAULT_CHUNK_TERMS_PROMPT,
+    DEFAULT_KEYWORD_PROMPT,
     GenericChunkKeywordContextRetriever,
     GenericKeywordContextRetriever,
 )
@@ -24,6 +27,7 @@ ORDER BY score DESC"""
         graph_store: PropertyGraphStore,
         llm: LLM | None = None,
         topk_search: int = 3,
+        keyword_prompt: str | PromptTemplate = DEFAULT_KEYWORD_PROMPT,
         **kwargs: Any,
     ) -> None:
         if not getattr(graph_store, "supports_structured_queries", False):
@@ -35,6 +39,7 @@ ORDER BY score DESC"""
             llm=llm,
             topk_search=topk_search,
             higher_score_is_better=True,
+            keyword_prompt=keyword_prompt,
             **kwargs,
         )
 
@@ -62,6 +67,8 @@ ORDER BY score DESC"""
         max_chunk_terms: int = 6,
         chunk_link_rels: tuple[str, ...] = ("MENTIONS",),
         restrict_to_seed_chunks: bool = True,
+        keyword_prompt: str | PromptTemplate = DEFAULT_KEYWORD_PROMPT,
+        chunk_terms_prompt: str | PromptTemplate = DEFAULT_CHUNK_TERMS_PROMPT,
         **kwargs: Any,
     ) -> None:
         if not getattr(graph_store, "supports_structured_queries", False):
@@ -76,6 +83,8 @@ ORDER BY score DESC"""
             max_chunk_terms=max_chunk_terms,
             chunk_link_rels=chunk_link_rels,
             restrict_to_seed_chunks=restrict_to_seed_chunks,
+            keyword_prompt=keyword_prompt,
+            chunk_terms_prompt=chunk_terms_prompt,
             **kwargs,
         )
 

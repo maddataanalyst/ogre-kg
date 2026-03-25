@@ -1,4 +1,4 @@
-"""Tests for ogre_kg.kg_processors.entity_similarity_finders module."""
+"""Tests for ogre_kg.kg_processors.entity_processing.entity_similarity_finders module."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ import pytest
 from conftest import FakeMemgraphStore, FakeNeo4jStore, FakeStructuredStore
 from llama_index.core.graph_stores.types import EntityNode
 
-from ogre_kg.kg_processors.entity_similarity_finders import (
+from ogre_kg.kg_processors.entity_processing.entity_similarity_finders import (
     FuzzyEntitySimilarityFinder,
     MemgraphCypherEntitySimilarityFinder,
     Neo4jGDSEntitySimilarityFinder,

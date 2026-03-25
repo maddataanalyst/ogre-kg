@@ -1,21 +1,49 @@
 from __future__ import annotations
 
 from abc import abstractmethod
-from typing import Any
+from typing import Any, TypeVar
 
-from llama_index.core.bridge.pydantic import BaseModel, Field
 from llama_index.core.graph_stores.types import KG_SOURCE_REL, PropertyGraphStore, Triplet
 from llama_index.core.indices.property_graph.sub_retrievers.base import BasePGRetriever
 from llama_index.core.llms import LLM
+from llama_index.core.program.utils import get_program_for_llm
 from llama_index.core.prompts import PromptTemplate
 from llama_index.core.schema import NodeWithScore, QueryBundle
 from llama_index.core.settings import Settings
+from llama_index.core.types import PydanticProgramMode
+from pydantic import BaseModel, Field
 
 from ogre_kg.utils import quote_cypher
 
+ModelT = TypeVar("ModelT", bound=BaseModel)
+DEFAULT_KEYWORD_PROMPT = PromptTemplate(
+    "Given a question, generate up to {max_keywords} entity names or graph-relevant "
+    "keywords that could match nodes in a knowledge graph.\n"
+    "Return only concise candidates.\n"
+    "----\n"
+    "QUESTION: {question}\n"
+    "----"
+)
+DEFAULT_CHUNK_TERMS_PROMPT = PromptTemplate(
+    "Given a question, generate up to {max_terms} concise search phrases for chunk "
+    "fulltext search.\n"
+    "Focus on domain terms or entities likely to appear verbatim in source text.\n"
+    "Return only concise phrases.\n"
+    "----\n"
+    "QUESTION: {question}\n"
+    "----"
+)
+
+
+def _coerce_prompt_template(prompt: str | PromptTemplate) -> PromptTemplate:
+    """Normalize prompt inputs to ``PromptTemplate`` instances."""
+    if isinstance(prompt, PromptTemplate):
+        return prompt
+    return PromptTemplate(prompt)
+
 
 class Keywords(BaseModel):
-    """Structured keyword candidates extracted from user query."""
+    """Structured keyword candidates extracted from a user query."""
 
     names: list[str] = Field(
         default_factory=list,
@@ -24,11 +52,11 @@ class Keywords(BaseModel):
 
 
 class ChunkTerms(BaseModel):
-    """Structured chunk-search terms extracted from a user query."""
+    """Structured chunk-search phrases extracted from a user query."""
 
     terms: list[str] = Field(
         default_factory=list,
-        description="Short keyword phrases suitable for chunk fulltext search.",
+        description="Concise chunk-search phrases likely to appear verbatim in source text.",
     )
 
 
@@ -39,10 +67,7 @@ class BaseGraphKeywordRetriever(BasePGRetriever):
     structured-query backends (Memgraph, Neo4j) or in-memory graph traversal.
     """
 
-    KEYWORD_PROMPT = PromptTemplate(
-        "Extract entity names and graph-relevant keywords from the question. "
-        "Return only concise candidates.\nQuestion: {question}"
-    )
+    KEYWORD_PROMPT = DEFAULT_KEYWORD_PROMPT
 
     def __init__(
         self,
@@ -55,6 +80,7 @@ class BaseGraphKeywordRetriever(BasePGRetriever):
         include_text: bool = True,
         include_properties: bool = False,
         higher_score_is_better: bool = False,
+        keyword_prompt: str | PromptTemplate = DEFAULT_KEYWORD_PROMPT,
         **kwargs: Any,
     ) -> None:
         """Initialize retriever.
@@ -79,6 +105,8 @@ class BaseGraphKeywordRetriever(BasePGRetriever):
             Whether to include full relation/node properties in triplet text.
         higher_score_is_better
             Score direction from backend seed search.
+        keyword_prompt
+            Prompt template used to extract graph keywords from the query.
         **kwargs
             Additional retriever options.
         """
@@ -88,6 +116,7 @@ class BaseGraphKeywordRetriever(BasePGRetriever):
         self.path_limit = path_limit
         self.result_limit = result_limit
         self.higher_score_is_better = higher_score_is_better
+        self.keyword_prompt = _coerce_prompt_template(keyword_prompt)
         super().__init__(
             graph_store=graph_store,
             include_text=include_text,
@@ -158,28 +187,106 @@ class BaseGraphKeywordRetriever(BasePGRetriever):
     async def _afetch_keyword_seed_matches(self, keyword: str) -> list[dict[str, Any]]:
         """Fetch seed graph nodes for one keyword asynchronously."""
 
-    def _extract_keywords(self, question: str) -> Keywords:
-        """Extract keyword candidates from a question using structured prediction."""
-        return self.llm.structured_predict(
-            Keywords,
-            self.KEYWORD_PROMPT,
-            question=question,
-        )
+    @staticmethod
+    def _normalize_candidates(candidates: list[str], max_items: int) -> list[str]:
+        """Normalize structured LLM candidates into a deduplicated list."""
+        deduped: list[str] = []
+        seen: set[str] = set()
 
-    async def _aextract_keywords(self, question: str) -> Keywords:
-        """Asynchronously extract keyword candidates from a question."""
-        return await self.llm.astructured_predict(
-            Keywords,
-            self.KEYWORD_PROMPT,
-            question=question,
+        for candidate in candidates:
+            cleaned = candidate.strip()
+            if not cleaned:
+                continue
+            dedup_key = cleaned.casefold()
+            if dedup_key in seen:
+                continue
+            seen.add(dedup_key)
+            deduped.append(cleaned)
+            if len(deduped) >= max_items:
+                break
+
+        return deduped
+
+    @staticmethod
+    def _should_retry_structured_prediction(error: ValueError) -> bool:
+        """Return whether structured prediction should retry in text-parsing mode."""
+        return str(error) in {
+            "Expected at least one tool call, but got 0 tool calls.",
+            "No valid tool calls found.",
+        }
+
+    def _structured_predict_with_fallback(
+        self,
+        output_cls: type[ModelT],
+        prompt: PromptTemplate,
+        **prompt_args: Any,
+    ) -> ModelT:
+        """Run structured prediction and retry with text parsing on tool-call failure."""
+        try:
+            return self.llm.structured_predict(output_cls, prompt, **prompt_args)
+        except ValueError as error:
+            if not self._should_retry_structured_prediction(error):
+                raise
+
+        program = get_program_for_llm(
+            output_cls,
+            prompt,
+            self.llm,
+            pydantic_program_mode=PydanticProgramMode.LLM,
         )
+        result = program(**prompt_args)
+        assert not isinstance(result, list)
+        return result
+
+    async def _astructured_predict_with_fallback(
+        self,
+        output_cls: type[ModelT],
+        prompt: PromptTemplate,
+        **prompt_args: Any,
+    ) -> ModelT:
+        """Run async structured prediction and retry with text parsing on tool-call failure."""
+        try:
+            return await self.llm.astructured_predict(output_cls, prompt, **prompt_args)
+        except ValueError as error:
+            if not self._should_retry_structured_prediction(error):
+                raise
+
+        program = get_program_for_llm(
+            output_cls,
+            prompt,
+            self.llm,
+            pydantic_program_mode=PydanticProgramMode.LLM,
+        )
+        result = await program.acall(**prompt_args)
+        assert not isinstance(result, list)
+        return result
+
+    def _extract_keywords(self, question: str) -> list[str]:
+        """Extract keyword candidates from a question using structured prediction."""
+        response = self._structured_predict_with_fallback(
+            Keywords,
+            self.keyword_prompt,
+            question=question,
+            max_keywords=self.topk,
+        )
+        return self._normalize_candidates(response.names, max_items=self.topk)
+
+    async def _aextract_keywords(self, question: str) -> list[str]:
+        """Asynchronously extract keyword candidates from a question."""
+        response = await self._astructured_predict_with_fallback(
+            Keywords,
+            self.keyword_prompt,
+            question=question,
+            max_keywords=self.topk,
+        )
+        return self._normalize_candidates(response.names, max_items=self.topk)
 
     def retrieve_from_graph(self, query_bundle: QueryBundle) -> list[NodeWithScore]:
         """Retrieve graph-context triplets via keyword seed expansion."""
-        response = self._extract_keywords(query_bundle.query_str)
+        keywords = self._extract_keywords(query_bundle.query_str)
 
         seed_scores: dict[str, float] = {}
-        for keyword in response.names:
+        for keyword in keywords:
             for record in self._fetch_keyword_seed_matches(keyword):
                 node_id = self._extract_node_id(record)
                 if not node_id:
@@ -212,10 +319,10 @@ class BaseGraphKeywordRetriever(BasePGRetriever):
 
     async def aretrieve_from_graph(self, query_bundle: QueryBundle) -> list[NodeWithScore]:
         """Asynchronously retrieve graph-context triplets from a user query."""
-        response = await self._aextract_keywords(query_bundle.query_str)
+        keywords = await self._aextract_keywords(query_bundle.query_str)
 
         seed_scores: dict[str, float] = {}
-        for keyword in response.names:
+        for keyword in keywords:
             for record in await self._afetch_keyword_seed_matches(keyword):
                 node_id = self._extract_node_id(record)
                 if not node_id:
@@ -260,6 +367,7 @@ class GenericKeywordContextRetriever(BaseGraphKeywordRetriever):
         include_text: bool = True,
         include_properties: bool = False,
         higher_score_is_better: bool = False,
+        keyword_prompt: str | PromptTemplate = DEFAULT_KEYWORD_PROMPT,
         **kwargs: Any,
     ) -> None:
         super().__init__(
@@ -272,6 +380,7 @@ class GenericKeywordContextRetriever(BaseGraphKeywordRetriever):
             include_text=include_text,
             include_properties=include_properties,
             higher_score_is_better=higher_score_is_better,
+            keyword_prompt=keyword_prompt,
             **kwargs,
         )
         self.search_query = search_query
@@ -293,11 +402,7 @@ class GenericKeywordContextRetriever(BaseGraphKeywordRetriever):
 class GenericChunkKeywordContextRetriever(GenericKeywordContextRetriever):
     """Shared chunk-first retrieval flow for structured-query graph stores."""
 
-    CHUNK_TERMS_PROMPT = PromptTemplate(
-        "Extract up to {max_terms} concise search phrases for chunk fulltext search. "
-        "Focus on domain terms or entities likely present verbatim in text chunks.\n"
-        "Question: {question}"
-    )
+    CHUNK_TERMS_PROMPT = DEFAULT_CHUNK_TERMS_PROMPT
 
     CHUNK_ENTITY_LINK_QUERY = """MATCH (c:Chunk)-[r]->(e:__Entity__)
 WHERE c.id IN $chunk_ids AND type(r) IN $allowed_rels
@@ -312,6 +417,8 @@ RETURN DISTINCT e.id AS node_id, c.id AS chunk_id"""
         max_chunk_terms: int = 6,
         chunk_link_rels: tuple[str, ...] = ("MENTIONS",),
         restrict_to_seed_chunks: bool = True,
+        keyword_prompt: str | PromptTemplate = DEFAULT_KEYWORD_PROMPT,
+        chunk_terms_prompt: str | PromptTemplate = DEFAULT_CHUNK_TERMS_PROMPT,
         **kwargs: Any,
     ) -> None:
         if max_chunk_terms < 1:
@@ -322,12 +429,14 @@ RETURN DISTINCT e.id AS node_id, c.id AS chunk_id"""
         self.max_chunk_terms = max_chunk_terms
         self.chunk_link_rels = chunk_link_rels
         self.restrict_to_seed_chunks = restrict_to_seed_chunks
+        self.chunk_terms_prompt = _coerce_prompt_template(chunk_terms_prompt)
 
         super().__init__(
             graph_store=graph_store,
             search_query=search_query,
             llm=llm,
             topk_search=topk_search,
+            keyword_prompt=keyword_prompt,
             **kwargs,
         )
 
@@ -339,39 +448,29 @@ RETURN DISTINCT e.id AS node_id, c.id AS chunk_id"""
     async def _afetch_chunk_seed_matches(self, term: str) -> list[dict[str, Any]]:
         """Asynchronously fetch chunk seed rows for one extracted chunk search term."""
 
-    def _extract_chunk_terms(self, question: str) -> ChunkTerms:
-        return self.llm.structured_predict(
+    def _extract_chunk_terms(self, question: str) -> list[str]:
+        """Extract structured chunk-search terms from a question."""
+        response = self._structured_predict_with_fallback(
             ChunkTerms,
-            self.CHUNK_TERMS_PROMPT,
+            self.chunk_terms_prompt,
             question=question,
             max_terms=self.max_chunk_terms,
         )
+        return self._normalize_candidates(response.terms, max_items=self.max_chunk_terms)
 
-    async def _aextract_chunk_terms(self, question: str) -> ChunkTerms:
-        return await self.llm.astructured_predict(
+    async def _aextract_chunk_terms(self, question: str) -> list[str]:
+        """Asynchronously extract structured chunk-search terms from a question."""
+        response = await self._astructured_predict_with_fallback(
             ChunkTerms,
-            self.CHUNK_TERMS_PROMPT,
+            self.chunk_terms_prompt,
             question=question,
             max_terms=self.max_chunk_terms,
         )
+        return self._normalize_candidates(response.terms, max_items=self.max_chunk_terms)
 
     def _normalize_chunk_terms(self, terms: list[str]) -> list[str]:
-        deduped: list[str] = []
-        seen: set[str] = set()
-
-        for term in terms:
-            cleaned = term.strip()
-            if not cleaned:
-                continue
-            dedup_key = cleaned.casefold()
-            if dedup_key in seen:
-                continue
-            seen.add(dedup_key)
-            deduped.append(cleaned)
-            if len(deduped) >= self.max_chunk_terms:
-                break
-
-        return deduped
+        """Normalize extracted chunk terms using the shared candidate policy."""
+        return self._normalize_candidates(terms, max_items=self.max_chunk_terms)
 
     def _collect_seed_scores(
         self,
@@ -485,7 +584,7 @@ RETURN DISTINCT e.id AS node_id, c.id AS chunk_id"""
 
     def retrieve_from_graph(self, query_bundle: QueryBundle) -> list[NodeWithScore]:
         """Retrieve graph-context triplets from chunk-first keyword search."""
-        terms = self._normalize_chunk_terms(self._extract_chunk_terms(query_bundle.query_str).terms)
+        terms = self._normalize_chunk_terms(self._extract_chunk_terms(query_bundle.query_str))
         if not terms:
             return []
 
@@ -529,7 +628,7 @@ RETURN DISTINCT e.id AS node_id, c.id AS chunk_id"""
     async def aretrieve_from_graph(self, query_bundle: QueryBundle) -> list[NodeWithScore]:
         """Asynchronously retrieve graph-context triplets from chunk-first keyword search."""
         terms = self._normalize_chunk_terms(
-            (await self._aextract_chunk_terms(query_bundle.query_str)).terms
+            await self._aextract_chunk_terms(query_bundle.query_str)
         )
         if not terms:
             return []

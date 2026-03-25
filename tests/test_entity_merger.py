@@ -1,11 +1,11 @@
-"""Tests for ogre_kg.kg_processors.entity_merger module."""
+"""Tests for ogre_kg.kg_processors.entity_processing.entity_merger module."""
 
 from __future__ import annotations
 
 import pytest
 from conftest import FakeMemgraphStore, FakeNeo4jStore, FakeStructuredStore
 
-from ogre_kg.kg_processors.entity_merger import (
+from ogre_kg.kg_processors.entity_processing.entity_merger import (
     MemgraphEntityMerger,
     MemgraphSynonymCreator,
     Neo4jEntityMerger,

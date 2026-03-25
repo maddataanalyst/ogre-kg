@@ -1,18 +1,20 @@
-"""Tests for ogre_kg.kg_processors.entity_disambiguation module."""
+"""Tests for ogre_kg.kg_processors.entity_processing.entity_disambiguation module."""
 
 from __future__ import annotations
 
 import pytest
 from conftest import FakeIndex, FakeMemgraphStore, FakeNeo4jStore, FakeStructuredStore
 
-from ogre_kg.kg_processors.entity_disambiguation import EntityDisambiguationProcessor
-from ogre_kg.kg_processors.entity_merger import (
+from ogre_kg.kg_processors.entity_processing.entity_disambiguation import (
+    EntityDisambiguationProcessor,
+)
+from ogre_kg.kg_processors.entity_processing.entity_merger import (
     MemgraphEntityMerger,
     MemgraphSynonymCreator,
     Neo4jEntityMerger,
     Neo4jSynonymCreator,
 )
-from ogre_kg.kg_processors.entity_similarity_finders import (
+from ogre_kg.kg_processors.entity_processing.entity_similarity_finders import (
     MemgraphCypherEntitySimilarityFinder,
     Neo4jGDSEntitySimilarityFinder,
 )

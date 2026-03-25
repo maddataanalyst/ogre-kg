@@ -12,13 +12,12 @@ authors = [
     { name = "Filip Wójcik", email = "ds@filip-wojcik.com" },
 ]
 dependencies = [
-    "litellm>=1.82.1",
     "llama-index>=0.14.14",
     "llama-index-embeddings-huggingface>=0.6.1",
-    "llama-index-embeddings-litellm>=0.5.0",
     "llama-index-graph-stores-memgraph>=0.4.1",
-    "llama-index-llms-litellm>=0.7.0",
+    "llama-index-llms-openrouter>=0.3.0",
     "llama-index-readers-wikipedia>=0.5.0",
+    "pandas>=2.2.3",
     "rapidfuzz>=3.0.0",
     "tqdm>=4.67.3",
     "wikipedia>=1.4.0",

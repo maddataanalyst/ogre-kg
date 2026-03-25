@@ -4,16 +4,22 @@ from dataclasses import dataclass
 from typing import Any
 
 import pytest
+from llama_index.core.base.llms.types import ChatMessage, ChatResponse, MessageRole
 from llama_index.core.graph_stores.types import KG_SOURCE_REL, EntityNode, Relation
+from llama_index.core.prompts import PromptTemplate
 from llama_index.core.schema import QueryBundle
 
 from ogre_kg.kg_processors.retrievers import (
-    ChunkTerms,
-    Keywords,
     MemgraphChunkKeywordRetriever,
     MemgraphKeywordContextRetriever,
     Neo4jChunkKeywordRetriever,
     Neo4jKeywordContextRetriever,
+)
+from ogre_kg.kg_processors.retrievers.base_retrievers import (
+    DEFAULT_CHUNK_TERMS_PROMPT,
+    DEFAULT_KEYWORD_PROMPT,
+    ChunkTerms,
+    Keywords,
 )
 
 
@@ -22,26 +28,75 @@ class FakeLLM:
         self,
         names: list[str] | None = None,
         chunk_terms: list[str] | None = None,
+        keyword_response: Keywords | None = None,
+        chunk_response: ChunkTerms | None = None,
     ) -> None:
-        self.names = names or ["Tesla", "Edison"]
+        self.names = ["Tesla", "Edison"] if names is None else names
         self.chunk_terms = ["basal cell", "treatment"] if chunk_terms is None else chunk_terms
+        self.keyword_response = keyword_response
+        self.chunk_response = chunk_response
         self.keyword_questions: list[str] = []
         self.chunk_questions: list[str] = []
+        self.keyword_prompts: list[PromptTemplate] = []
+        self.chunk_prompts: list[PromptTemplate] = []
 
     def structured_predict(self, output_cls, prompt, **kwargs):
-        del prompt
         question = kwargs["question"]
+
         if output_cls is Keywords:
+            self.keyword_prompts.append(prompt)
             self.keyword_questions.append(question)
-            return Keywords(names=self.names)
+            if self.keyword_response is not None:
+                return self.keyword_response
+            max_keywords = int(kwargs["max_keywords"])
+            return Keywords(names=self.names[:max_keywords])
+
         if output_cls is ChunkTerms:
+            self.chunk_prompts.append(prompt)
             self.chunk_questions.append(question)
+            if self.chunk_response is not None:
+                return self.chunk_response
             max_terms = int(kwargs["max_terms"])
             return ChunkTerms(terms=self.chunk_terms[:max_terms])
-        raise AssertionError(f"Unsupported output_cls: {output_cls}")
+
+        raise AssertionError(f"Unsupported output class: {output_cls}")
 
     async def astructured_predict(self, output_cls, prompt, **kwargs):
         return self.structured_predict(output_cls=output_cls, prompt=prompt, **kwargs)
+
+
+@dataclass
+class FakeLLMMetadata:
+    is_function_calling_model: bool = True
+    is_chat_model: bool = True
+
+
+class FakeFallbackLLM:
+    def __init__(self) -> None:
+        self.metadata = FakeLLMMetadata()
+
+    def structured_predict(self, output_cls, prompt, **kwargs):
+        del output_cls, prompt, kwargs
+        raise ValueError("Expected at least one tool call, but got 0 tool calls.")
+
+    async def astructured_predict(self, output_cls, prompt, **kwargs):
+        del output_cls, prompt, kwargs
+        raise ValueError("Expected at least one tool call, but got 0 tool calls.")
+
+    def _extend_messages(self, messages):
+        return list(messages)
+
+    def chat(self, messages, **kwargs):
+        del kwargs
+        prompt_text = "\n".join(message.content or "" for message in messages)
+        if "chunk fulltext search" in prompt_text:
+            content = '{"terms":[" basal cell ","Basal Cell","treatment"]}'
+        else:
+            content = '{"names":[" Tesla ","tesla","Edison"]}'
+        return ChatResponse(message=ChatMessage(role=MessageRole.ASSISTANT, content=content))
+
+    async def achat(self, messages, **kwargs):
+        return self.chat(messages=messages, **kwargs)
 
 
 @dataclass
@@ -468,6 +523,91 @@ def test_memgraph_retriever_sync_uses_seed_search_then_rel_map():
     assert nodes[1].node.ref_doc_id == "chunk-2"
 
 
+def test_memgraph_retriever_normalizes_structured_keyword_output():
+    # given
+    store = FakeStructuredStore()
+    llm = FakeLLM(
+        keyword_response=Keywords(names=[" Tesla ", "tesla", "Edison", "", "Nikola Tesla"])
+    )
+    retriever = MemgraphKeywordContextRetriever(graph_store=store, llm=llm, topk_search=2)
+
+    # when
+    retriever.retrieve_from_graph(QueryBundle(query_str="Who collaborated with Tesla?"))
+
+    # then
+    assert llm.keyword_questions == ["Who collaborated with Tesla?"]
+    assert "data.name:'Tesla'" in store.queries[0]
+    assert "data.name:'Edison'" in store.queries[1]
+    assert len(store.queries) == 2
+
+
+def test_memgraph_retriever_uses_default_keyword_prompt():
+    # given
+    store = FakeStructuredStore()
+    llm = FakeLLM()
+    retriever = MemgraphKeywordContextRetriever(graph_store=store, llm=llm)
+
+    # when
+    retriever.retrieve_from_graph(QueryBundle(query_str="Who collaborated with Tesla?"))
+
+    # then
+    assert llm.keyword_prompts == [DEFAULT_KEYWORD_PROMPT]
+
+
+def test_memgraph_retriever_accepts_string_keyword_prompt_override():
+    # given
+    store = FakeStructuredStore()
+    llm = FakeLLM()
+    prompt_text = "Wyodrebnij encje z pytania.\nQUESTION: {question}"
+    retriever = MemgraphKeywordContextRetriever(
+        graph_store=store,
+        llm=llm,
+        keyword_prompt=prompt_text,
+    )
+
+    # when
+    retriever.retrieve_from_graph(QueryBundle(query_str="Who collaborated with Tesla?"))
+
+    # then
+    assert llm.keyword_prompts[0].template == prompt_text
+
+
+def test_memgraph_retriever_accepts_prompt_template_keyword_override():
+    # given
+    store = FakeStructuredStore()
+    llm = FakeLLM()
+    prompt = PromptTemplate("Extract graph entities.\nQUESTION: {question}")
+    retriever = MemgraphKeywordContextRetriever(
+        graph_store=store,
+        llm=llm,
+        keyword_prompt=prompt,
+    )
+
+    # when
+    retriever.retrieve_from_graph(QueryBundle(query_str="Who collaborated with Tesla?"))
+
+    # then
+    assert llm.keyword_prompts == [prompt]
+
+
+def test_memgraph_retriever_falls_back_when_function_calls_are_missing():
+    # given
+    store = FakeStructuredStore()
+    retriever = MemgraphKeywordContextRetriever(
+        graph_store=store,
+        llm=FakeFallbackLLM(),
+        topk_search=2,
+    )
+
+    # when
+    retriever.retrieve_from_graph(QueryBundle(query_str="Who collaborated with Tesla?"))
+
+    # then
+    assert "data.name:'Tesla'" in store.queries[0]
+    assert "data.name:'Edison'" in store.queries[1]
+    assert len(store.queries) == 2
+
+
 @pytest.mark.asyncio
 async def test_memgraph_retriever_async_uses_seed_search_then_rel_map():
     store = FakeStructuredStore()
@@ -647,6 +787,91 @@ def test_memgraph_chunk_retriever_returns_empty_when_no_chunk_terms():
 
     assert nodes == []
     assert store.queries == []
+
+
+def test_memgraph_chunk_retriever_normalizes_structured_chunk_terms():
+    store = FakeMemgraphChunkFirstStore()
+    retriever = MemgraphChunkKeywordRetriever(
+        graph_store=store,
+        llm=FakeLLM(
+            chunk_response=ChunkTerms(
+                terms=[" basal cell ", "treatment", "", "Basal Cell", "ignored"]
+            )
+        ),
+        max_chunk_terms=2,
+    )
+    query_bundle = QueryBundle(query_str="basal cell treatment options")
+
+    retriever.retrieve_from_graph(query_bundle)
+
+    assert store.param_maps[0] == {"search_query": "data.text:'basal cell'", "topk": 3}
+    assert store.param_maps[1] == {"search_query": "data.text:'treatment'", "topk": 3}
+    assert len(store.param_maps) == 3
+
+
+def test_memgraph_chunk_retriever_uses_default_chunk_terms_prompt():
+    # given
+    store = FakeMemgraphChunkFirstStore()
+    llm = FakeLLM()
+    retriever = MemgraphChunkKeywordRetriever(graph_store=store, llm=llm)
+
+    # when
+    retriever.retrieve_from_graph(QueryBundle(query_str="basal cell treatment options"))
+
+    # then
+    assert llm.chunk_prompts == [DEFAULT_CHUNK_TERMS_PROMPT]
+
+
+def test_memgraph_chunk_retriever_accepts_string_chunk_terms_prompt_override():
+    # given
+    store = FakeMemgraphChunkFirstStore()
+    llm = FakeLLM()
+    prompt_text = "Wygeneruj frazy wyszukiwania chunkow.\nQUESTION: {question}"
+    retriever = MemgraphChunkKeywordRetriever(
+        graph_store=store,
+        llm=llm,
+        chunk_terms_prompt=prompt_text,
+    )
+
+    # when
+    retriever.retrieve_from_graph(QueryBundle(query_str="basal cell treatment options"))
+
+    # then
+    assert llm.chunk_prompts[0].template == prompt_text
+
+
+def test_memgraph_chunk_retriever_accepts_prompt_template_chunk_terms_override():
+    # given
+    store = FakeMemgraphChunkFirstStore()
+    llm = FakeLLM()
+    prompt = PromptTemplate("Extract chunk search phrases.\nQUESTION: {question}")
+    retriever = MemgraphChunkKeywordRetriever(
+        graph_store=store,
+        llm=llm,
+        chunk_terms_prompt=prompt,
+    )
+
+    # when
+    retriever.retrieve_from_graph(QueryBundle(query_str="basal cell treatment options"))
+
+    # then
+    assert llm.chunk_prompts == [prompt]
+
+
+@pytest.mark.asyncio
+async def test_memgraph_chunk_retriever_async_falls_back_when_function_calls_are_missing():
+    store = FakeMemgraphChunkFirstStore()
+    retriever = MemgraphChunkKeywordRetriever(
+        graph_store=store,
+        llm=FakeFallbackLLM(),
+        max_chunk_terms=2,
+    )
+
+    nodes = await retriever.aretrieve_from_graph(QueryBundle(query_str="basal cell treatment"))
+
+    assert len(nodes) == 3
+    assert store.param_maps[0] == {"search_query": "data.text:'basal cell'", "topk": 3}
+    assert store.param_maps[1] == {"search_query": "data.text:'treatment'", "topk": 3}
 
 
 def test_memgraph_chunk_retriever_requires_non_empty_chunk_link_rels():
