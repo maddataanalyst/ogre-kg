@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from enum import Enum
 from typing import Any, Protocol
 
@@ -18,10 +19,18 @@ class StructuredQueryCapableStore(Protocol):
 
     supports_structured_queries: bool
 
-    def structured_query(self, query: str) -> list[dict[str, Any]]:
+    def structured_query(
+        self,
+        query: str,
+        param_map: dict[str, Any] | None = None,
+    ) -> list[dict[str, Any]]:
         """Execute a synchronous backend query and return records."""
 
-    async def astructured_query(self, query: str) -> list[dict[str, Any]]:
+    async def astructured_query(
+        self,
+        query: str,
+        param_map: dict[str, Any] | None = None,
+    ) -> list[dict[str, Any]]:
         """Execute an asynchronous backend query and return records."""
 
 
@@ -113,6 +122,26 @@ def quote_cypher(value: str) -> str:
         Escaped string safe for inclusion inside single quotes.
     """
     return value.replace("\\", "\\\\").replace("'", "\\'")
+
+
+_LUCENE_SPECIAL_CHAR_PATTERN = re.compile(r'(\&\&|\|\||[+\-!(){}\[\]^"~*?:\\/])')
+
+
+def escape_lucene_query(value: str) -> str:
+    """Return Lucene-safe query text for Neo4j full-text search.
+
+    Parameters
+    ----------
+    value
+        Raw string that will be passed to Neo4j full-text procedures backed by
+        the Lucene query parser.
+
+    Returns
+    -------
+    str
+        String with Lucene-reserved characters escaped.
+    """
+    return _LUCENE_SPECIAL_CHAR_PATTERN.sub(r"\\\1", value)
 
 
 class UnionFind:

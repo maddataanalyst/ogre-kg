@@ -6,6 +6,8 @@ from llama_index.core.graph_stores.types import PropertyGraphStore
 from llama_index.core.llms import LLM
 from llama_index.core.prompts import PromptTemplate
 
+from ogre_kg.utils import escape_lucene_query
+
 from .base_retrievers import (
     DEFAULT_CHUNK_TERMS_PROMPT,
     DEFAULT_KEYWORD_PROMPT,
@@ -17,7 +19,9 @@ from .base_retrievers import (
 class Neo4jKeywordContextRetriever(GenericKeywordContextRetriever):
     """Neo4j implementation of keyword-seeded relation-path retrieval."""
 
-    CYPHER_QUERY = """CALL db.index.fulltext.queryNodes("entity_name", '{name}', {{limit: {topk}}})
+    CYPHER_QUERY = """CALL db.index.fulltext.queryNodes(
+"entity_name", $search_query, {limit: $topk}
+)
 YIELD node, score
 RETURN node.id AS node_id, labels(node) AS labels, score
 ORDER BY score DESC"""
@@ -43,11 +47,35 @@ ORDER BY score DESC"""
             **kwargs,
         )
 
+    def _build_fulltext_search_term(self, keyword: str) -> str:
+        """Escape Lucene-reserved characters before Neo4j full-text search."""
+        return escape_lucene_query(keyword)
+
+    def _fetch_keyword_seed_matches(self, keyword: str) -> list[dict[str, Any]]:
+        return self._graph_store.structured_query(
+            self.CYPHER_QUERY,
+            param_map={
+                "search_query": self._build_fulltext_search_term(keyword),
+                "topk": self.topk,
+            },
+        )
+
+    async def _afetch_keyword_seed_matches(self, keyword: str) -> list[dict[str, Any]]:
+        return await self._graph_store.astructured_query(
+            self.CYPHER_QUERY,
+            param_map={
+                "search_query": self._build_fulltext_search_term(keyword),
+                "topk": self.topk,
+            },
+        )
+
 
 class Neo4jChunkKeywordRetriever(GenericChunkKeywordContextRetriever):
     """Neo4j implementation of chunk-seeded relation-path retrieval."""
 
-    CYPHER_QUERY = """CALL db.index.fulltext.queryNodes("chunk_text", '{name}', {{limit: {topk}}})
+    CYPHER_QUERY = """CALL db.index.fulltext.queryNodes(
+"chunk_text", $search_query, {limit: $topk}
+)
 YIELD node, score
 RETURN node.id AS node_id, labels(node) AS labels, score
 ORDER BY score DESC"""
@@ -88,14 +116,24 @@ ORDER BY score DESC"""
             **kwargs,
         )
 
+    def _build_fulltext_search_term(self, term: str) -> str:
+        """Escape Lucene-reserved characters before Neo4j full-text search."""
+        return escape_lucene_query(term)
+
     def _fetch_chunk_seed_matches(self, term: str) -> list[dict[str, Any]]:
         return self._graph_store.structured_query(
             self.CHUNK_SEARCH_QUERY,
-            param_map={"search_query": term, "topk": self.topk},
+            param_map={
+                "search_query": self._build_fulltext_search_term(term),
+                "topk": self.topk,
+            },
         )
 
     async def _afetch_chunk_seed_matches(self, term: str) -> list[dict[str, Any]]:
         return await self._graph_store.astructured_query(
             self.CHUNK_SEARCH_QUERY,
-            param_map={"search_query": term, "topk": self.topk},
+            param_map={
+                "search_query": self._build_fulltext_search_term(term),
+                "topk": self.topk,
+            },
         )

@@ -212,19 +212,32 @@ class FakeStructuredStore:
 
 @dataclass
 class FakeNeo4jStructuredStore(FakeStructuredStore):
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        self.param_maps: list[dict[str, Any] | None] = []
+
     def structured_query(
         self,
         query: str,
         param_map: dict[str, Any] | None = None,
     ) -> list[dict[str, Any]]:
-        del param_map
         self.queries.append(query)
-        if "queryNodes(\"entity_name\", 'Tesla'" in query:
+        self.param_maps.append(param_map)
+
+        if (
+            "db.index.fulltext.queryNodes" in query
+            and '"entity_name", $search_query, {limit: $topk}' in query
+            and (param_map or {}).get("search_query") == "Tesla"
+        ):
             return [
                 {"node_id": "entity_tesla", "score": 0.2},
                 {"node_id": "entity_common", "score": 0.3},
             ]
-        if "queryNodes(\"entity_name\", 'Edison'" in query:
+        if (
+            "db.index.fulltext.queryNodes" in query
+            and '"entity_name", $search_query, {limit: $topk}' in query
+            and (param_map or {}).get("search_query") == "Edison"
+        ):
             return [
                 {"node_id": "entity_common", "score": 0.8},
                 {"node_id": "entity_edison", "score": 0.1},
@@ -668,8 +681,12 @@ def test_neo4j_retriever_uses_fulltext_seed_query_and_descending_scores():
     nodes = retriever.retrieve_from_graph(query_bundle)
 
     assert len(nodes) == 2
-    assert "db.index.fulltext.queryNodes(\"entity_name\", 'Tesla', {limit: 4})" in store.queries[0]
-    assert "db.index.fulltext.queryNodes(\"entity_name\", 'Edison', {limit: 4})" in store.queries[1]
+    assert "db.index.fulltext.queryNodes" in store.queries[0]
+    assert '"entity_name", $search_query, {limit: $topk}' in store.queries[0]
+    assert store.param_maps[0] == {"search_query": "Tesla", "topk": 4}
+    assert "db.index.fulltext.queryNodes" in store.queries[1]
+    assert '"entity_name", $search_query, {limit: $topk}' in store.queries[1]
+    assert store.param_maps[1] == {"search_query": "Edison", "topk": 4}
     assert nodes[0].score == 0.8
     assert nodes[0].node.text == "entity_common -> RELATED_TO -> entity_tesla"
     assert nodes[1].score == 0.1
@@ -688,9 +705,27 @@ async def test_neo4j_retriever_async_uses_fulltext_seed_query():
     nodes = await retriever.aretrieve_from_graph(query_bundle)
 
     assert len(nodes) == 2
-    assert "db.index.fulltext.queryNodes(\"entity_name\", 'Tesla', {limit: 2})" in store.queries[0]
-    assert "db.index.fulltext.queryNodes(\"entity_name\", 'Edison', {limit: 2})" in store.queries[1]
+    assert store.param_maps[0] == {"search_query": "Tesla", "topk": 2}
+    assert store.param_maps[1] == {"search_query": "Edison", "topk": 2}
     assert nodes[0].score == 0.8
+
+
+def test_neo4j_retriever_escapes_keyword_for_fulltext_query():
+    # given
+    store = FakeNeo4jStructuredStore()
+    retriever = Neo4jKeywordContextRetriever(
+        graph_store=store,
+        llm=FakeLLM(names=["Definition of learning (Mitchell) / machine learning?"]),
+    )
+
+    # when
+    retriever.retrieve_from_graph(QueryBundle(query_str="How Tom Mitchell defines learning?"))
+
+    # then
+    assert store.param_maps[0] == {
+        "search_query": r"Definition of learning \(Mitchell\) \/ machine learning\?",
+        "topk": 3,
+    }
 
 
 def test_memgraph_chunk_retriever_uses_terms_per_term_topk_and_chunk_dedup():
@@ -982,6 +1017,24 @@ def test_neo4j_chunk_retriever_returns_empty_when_no_chunk_terms():
 
     assert nodes == []
     assert store.queries == []
+
+
+def test_neo4j_chunk_retriever_escapes_chunk_term_for_fulltext_query():
+    # given
+    store = FakeNeo4jChunkFirstStore()
+    retriever = Neo4jChunkKeywordRetriever(
+        graph_store=store,
+        llm=FakeLLM(chunk_terms=["Definition of learning (Mitchell) / machine learning?"]),
+    )
+
+    # when
+    retriever.retrieve_from_graph(QueryBundle(query_str="How Tom Mitchell defines learning?"))
+
+    # then
+    assert store.param_maps[0] == {
+        "search_query": r"Definition of learning \(Mitchell\) \/ machine learning\?",
+        "topk": 3,
+    }
 
 
 def test_neo4j_chunk_retriever_requires_non_empty_chunk_link_rels():

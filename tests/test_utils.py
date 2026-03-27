@@ -10,6 +10,7 @@ from ogre_kg.utils import (
     UnionFind,
     build_entity_groups,
     detect_graph_store_backend,
+    escape_lucene_query,
     quote_cypher,
     resolve_graph_store,
 )
@@ -195,6 +196,20 @@ class TestQuoteCypher:
 
     def test_escapes_both(self):
         assert quote_cypher("it's a\\path") == "it\\'s a\\\\path"
+
+
+class TestEscapeLuceneQuery:
+    def test_plain_string(self):
+        assert escape_lucene_query("hello world") == "hello world"
+
+    def test_escapes_reserved_characters(self):
+        assert (
+            escape_lucene_query('Definition of learning (Mitchell) / machine learning?')
+            == r'Definition of learning \(Mitchell\) \/ machine learning\?'
+        )
+
+    def test_escapes_boolean_operators(self):
+        assert escape_lucene_query("alpha && beta || gamma") == r"alpha \&& beta \|| gamma"
 
 
 class TestDetectGraphStoreBackend:
