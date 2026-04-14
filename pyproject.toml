@@ -30,7 +30,7 @@ neo4j = ["llama-index-graph-stores-neo4j>=0.4.0"]
 dev = [
     "mypy>=1.16.1",
     "pre-commit>=4.2.0",
-    "pytest>=8.3.5",
+    "pytest>=9.0.3",
     "pytest-asyncio>=1.1.0",
     "ruff>=0.12.7",
 ]
