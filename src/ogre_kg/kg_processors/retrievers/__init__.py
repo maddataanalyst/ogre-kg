@@ -9,6 +9,7 @@ from .base_retrievers import (
     GenericKeywordContextRetriever,
     Keywords,
 )
+from .falkordb_retrievers import FalkorDBChunkKeywordRetriever, FalkorDBKeywordContextRetriever
 from .memgraph_retrievers import MemgraphChunkKeywordRetriever, MemgraphKeywordContextRetriever
 from .neo4j_retrievers import Neo4jChunkKeywordRetriever, Neo4jKeywordContextRetriever
 
@@ -20,6 +21,8 @@ __all__ = [
     "GenericChunkKeywordContextRetriever",
     "GenericKeywordContextRetriever",
     "Keywords",
+    "FalkorDBChunkKeywordRetriever",
+    "FalkorDBKeywordContextRetriever",
     "MemgraphChunkKeywordRetriever",
     "MemgraphKeywordContextRetriever",
     "Neo4jChunkKeywordRetriever",

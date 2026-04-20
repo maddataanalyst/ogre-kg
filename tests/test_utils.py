@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import pytest
-from conftest import FakeMemgraphStore, FakeNeo4jStore, FakeStructuredStore
+from conftest import FakeFalkorDBStore, FakeMemgraphStore, FakeNeo4jStore, FakeStructuredStore
 
 from ogre_kg.utils import (
     GraphStoreBackend,
@@ -204,8 +204,8 @@ class TestEscapeLuceneQuery:
 
     def test_escapes_reserved_characters(self):
         assert (
-            escape_lucene_query('Definition of learning (Mitchell) / machine learning?')
-            == r'Definition of learning \(Mitchell\) \/ machine learning\?'
+            escape_lucene_query("Definition of learning (Mitchell) / machine learning?")
+            == r"Definition of learning \(Mitchell\) \/ machine learning\?"
         )
 
     def test_escapes_boolean_operators(self):
@@ -213,6 +213,16 @@ class TestEscapeLuceneQuery:
 
 
 class TestDetectGraphStoreBackend:
+    def test_detects_falkordb(self):
+        # given
+        store = FakeFalkorDBStore()
+
+        # when
+        backend = detect_graph_store_backend(store)
+
+        # then
+        assert backend == GraphStoreBackend.FALKORDB
+
     def test_detects_memgraph(self):
         # given
         store = FakeMemgraphStore()

@@ -18,6 +18,7 @@ class EntityDisambiguationProcessor:
 
     This design allows mixing any finder with any merger, for example:
     - ``FuzzyEntitySimilarityFinder`` + ``Neo4jEntityMerger``
+    - ``FalkorDBVectorEntitySimilarityFinder`` + ``FalkorDBSynonymCreator``
     - ``MemgraphCypherEntitySimilarityFinder`` + ``MemgraphSynonymCreator``
     - ``Neo4jGDSEntitySimilarityFinder`` + ``Neo4jSynonymCreator``
 

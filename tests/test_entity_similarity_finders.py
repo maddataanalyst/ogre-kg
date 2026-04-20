@@ -5,10 +5,12 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 import pytest
-from conftest import FakeMemgraphStore, FakeNeo4jStore, FakeStructuredStore
+from conftest import FakeFalkorDBStore, FakeMemgraphStore, FakeNeo4jStore, FakeStructuredStore
 from llama_index.core.graph_stores.types import EntityNode
 
 from ogre_kg.kg_processors.entity_processing.entity_similarity_finders import (
+    ExactMatchEntitySimilarityFinder,
+    FalkorDBVectorEntitySimilarityFinder,
     FuzzyEntitySimilarityFinder,
     MemgraphCypherEntitySimilarityFinder,
     Neo4jGDSEntitySimilarityFinder,
@@ -183,6 +185,63 @@ class TestNeo4jGDSEntitySimilarityFinder:
             Neo4jGDSEntitySimilarityFinder(source=store, embedding_attr="emb")
 
 
+class TestFalkorDBVectorEntitySimilarityFinder:
+    def test_find_similar_entities_uses_vector_distance_query(self):
+        # given
+        store = FakeFalkorDBStore(
+            similarity_pairs=[
+                {"name1": "IBM", "name2": "International Business Machines", "similarity": 0.9},
+            ]
+        )
+        finder = FalkorDBVectorEntitySimilarityFinder(
+            source=store,
+            embedding_attr="embedding",
+            similarity_threshold=0.5,
+        )
+
+        # when
+        groups = finder.find_similar_entities()
+
+        # then
+        assert len(groups) == 1
+        assert {"IBM", "International Business Machines"} in groups
+        assert "vec.cosineDistance" in store.queries[0]
+
+    def test_threshold_and_embedding_attr_embedded_in_query(self):
+        # given
+        store = FakeFalkorDBStore()
+        finder = FalkorDBVectorEntitySimilarityFinder(
+            source=store,
+            embedding_attr="emb",
+            similarity_threshold=0.42,
+        )
+
+        # when
+        finder.find_similar_entities()
+
+        # then
+        query = store.queries[0]
+        assert "0.42" in query
+        assert "a.emb" in query
+        assert "b.emb" in query
+
+    def test_rejects_memgraph_store(self):
+        # given
+        store = FakeMemgraphStore()
+
+        # when / then
+        with pytest.raises(ValueError, match="requires a FalkorDB graph store"):
+            FalkorDBVectorEntitySimilarityFinder(source=store, embedding_attr="embedding")
+
+    def test_rejects_unknown_backend(self):
+        # given
+        store = FakeStructuredStore()
+
+        # when / then
+        with pytest.raises(ValueError, match="Cannot detect backend"):
+            FalkorDBVectorEntitySimilarityFinder(source=store, embedding_attr="embedding")
+
+
 class TestFuzzyEntitySimilarityFinder:
     def test_fuzzy_matching_groups_similar_names(self):
         # given
@@ -213,6 +272,42 @@ class TestFuzzyEntitySimilarityFinder:
             ]
         )
         finder = FuzzyEntitySimilarityFinder(source=store, similarity_threshold=99.0)
+
+        # when
+        groups = finder.find_similar_entities()
+
+        # then
+        assert groups == []
+
+
+class TestExactMatchEntitySimilarityFinder:
+    def test_groups_names_by_normalized_exact_match(self):
+        # given
+        store = FakeGraphStoreWithGet(
+            entities=[
+                EntityNode(name="New York"),
+                EntityNode(name="  new york  "),
+                EntityNode(name="New   York"),
+                EntityNode(name="London"),
+            ]
+        )
+        finder = ExactMatchEntitySimilarityFinder(source=store)
+
+        # when
+        groups = finder.find_similar_entities()
+
+        # then
+        assert groups == [{"New York", "  new york  ", "New   York"}]
+
+    def test_ignores_unique_names(self):
+        # given
+        store = FakeGraphStoreWithGet(
+            entities=[
+                EntityNode(name="Apple"),
+                EntityNode(name="Banana"),
+            ]
+        )
+        finder = ExactMatchEntitySimilarityFinder(source=store)
 
         # when
         groups = finder.find_similar_entities()

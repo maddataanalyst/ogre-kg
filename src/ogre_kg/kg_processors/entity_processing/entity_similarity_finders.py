@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from abc import ABC, abstractmethod
 from collections import defaultdict
 from typing import Any, Literal
@@ -177,12 +178,116 @@ class Neo4jGDSEntitySimilarityFinder(EntitySimilarityFinder):
         return build_entity_groups(pairs)
 
 
+class FalkorDBVectorEntitySimilarityFinder(EntitySimilarityFinder):
+    """Entity similarity finder using FalkorDB vector distance functions.
+
+    Uses FalkorDB's ``vec.cosineDistance`` function on stored entity embeddings
+    to find similar pairs, then groups them into connected components via
+    union-find.
+
+    Validates at init time that the provided graph store is a FalkorDB backend.
+
+    Parameters
+    ----------
+    source
+        FalkorDB graph store or index-like provider.
+    embedding_attr
+        Node property name containing embedding vectors.
+    similarity_threshold
+        Minimum cosine similarity for a pair to be considered similar.
+    """
+
+    SIMILARITY_QUERY = (
+        "MATCH (a:`__Entity__`), (b:`__Entity__`)\n"
+        "WHERE id(a) < id(b)\n"
+        "WITH a.name AS name1, b.name AS name2,\n"
+        "  1.0 - vec.cosineDistance(a.{embedding_attr}, b.{embedding_attr}) AS similarity\n"
+        "WHERE similarity > {threshold}\n"
+        "RETURN name1, name2, similarity\n"
+        "ORDER BY similarity DESC"
+    )
+
+    def __init__(
+        self,
+        source: StructuredQueryCapableStore | PropertyGraphStoreProvider,
+        embedding_attr: str = "embedding",
+        similarity_threshold: float = 0.5,
+    ) -> None:
+        super().__init__(source, similarity_threshold)
+        backend = detect_graph_store_backend(self.graph_store)
+        if backend != GraphStoreBackend.FALKORDB:
+            raise ValueError(
+                f"FalkorDBVectorEntitySimilarityFinder requires a FalkorDB graph store, "
+                f"but detected backend: {backend.value}"
+            )
+        self.embedding_attr = embedding_attr
+
+    def find_similar_entities(self) -> list[set[str]]:
+        """Find similar entity groups using FalkorDB vector similarity.
+
+        Returns
+        -------
+        list[set[str]]
+            Connected components of similar entities.
+        """
+        query = self.SIMILARITY_QUERY.format(
+            embedding_attr=self.embedding_attr,
+            threshold=self.similarity_threshold,
+        )
+        pairs = self.graph_store.structured_query(query)
+        return build_entity_groups(pairs)
+
+
+class ExactMatchEntitySimilarityFinder(EntitySimilarityFinder):
+    """Entity similarity finder using normalized exact-name matching.
+
+    Groups entities whose normalized names are identical after trimming,
+    case-folding, and collapsing repeated whitespace.
+
+    Parameters
+    ----------
+    source
+        Graph store or index-like object. Must support ``get()`` returning
+        entity nodes.
+    similarity_threshold
+        Unused for exact matching; retained for API compatibility.
+    """
+
+    def __init__(
+        self,
+        source: StructuredQueryCapableStore | PropertyGraphStoreProvider | PropertyGraphStore,
+        similarity_threshold: float = 1.0,
+    ) -> None:
+        self.graph_store = _resolve_graph_store_with_get(source)
+        self.similarity_threshold = similarity_threshold
+
+    def find_similar_entities(self) -> list[set[str]]:
+        """Find groups of entities with equal normalized names.
+
+        Returns
+        -------
+        list[set[str]]
+            Groups of entity names with exact normalized matches.
+        """
+        grouped_names: dict[str, set[str]] = defaultdict(set)
+        for node in self.graph_store.get():
+            if not isinstance(node, EntityNode):
+                continue
+            grouped_names[self.normalize_name(node.name)].add(node.name)
+        return [group for group in grouped_names.values() if len(group) > 1]
+
+    @staticmethod
+    def normalize_name(name: str) -> str:
+        """Normalize an entity name for exact matching."""
+        return re.sub(r"\s+", " ", name.strip()).casefold()
+
+
 class FuzzyEntitySimilarityFinder(EntitySimilarityFinder):
     """Entity similarity finder using fuzzy string matching (rapidfuzz).
 
     Compares entity names pairwise using token-sort ratio from rapidfuzz.
     Works with any ``PropertyGraphStore`` that supports ``get()``.
-    This is a store-independent finder (works with Memgraph, Neo4j, in-memory).
+    This is a store-independent finder (works with FalkorDB, Memgraph, Neo4j, in-memory).
 
     Parameters
     ----------
@@ -236,7 +341,7 @@ class CustomEmbeddingsSimilarityFinder(EntitySimilarityFinder):
     Computes embeddings on the fly for entity names and compares them
     via cosine similarity. Works with any ``PropertyGraphStore`` that
     supports ``get()``.
-    This is a store-independent finder (works with Memgraph, Neo4j, in-memory).
+    This is a store-independent finder (works with FalkorDB, Memgraph, Neo4j, in-memory).
 
     Parameters
     ----------

@@ -204,6 +204,30 @@ class MemgraphTextIndexBuilder(GraphTextIndexBuilder):
                 raise
 
 
+class FalkorDBFulltextIndexBuilder(GraphTextIndexBuilder):
+    """FalkorDB full-text index builder.
+
+    Uses ``CALL db.idx.fulltext.createNodeIndex`` syntax.
+    """
+
+    def build_create_query(
+        self,
+        spec: GraphTextIndexSpec,
+        if_not_exists: bool = True,
+    ) -> str:
+        del if_not_exists  # FalkorDB procedure does not expose IF NOT EXISTS.
+        props = ", ".join(f"'{prop}'" for prop in spec.properties)
+        return f"CALL db.idx.fulltext.createNodeIndex('{spec.label}', {props})"
+
+    def build_drop_query(
+        self,
+        index_name: str,
+        if_exists: bool = True,
+    ) -> str:
+        del if_exists  # FalkorDB procedure does not expose IF EXISTS.
+        return f"CALL db.idx.fulltext.drop('{index_name}')"
+
+
 class Neo4jFulltextIndexBuilder(GraphTextIndexBuilder):
     """Neo4j fulltext index builder.
 
@@ -237,6 +261,8 @@ def make_graph_text_index_builder(
     graph_store = resolve_graph_store(source)
     backend = detect_graph_store_backend(graph_store)
 
+    if backend == GraphStoreBackend.FALKORDB:
+        return FalkorDBFulltextIndexBuilder(source=graph_store)
     if backend == GraphStoreBackend.MEMGRAPH:
         return MemgraphTextIndexBuilder(source=graph_store)
     if backend == GraphStoreBackend.NEO4J:

@@ -3,9 +3,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import pytest
-from conftest import FakeMemgraphStore, FakeNeo4jStore, FakeStructuredStore
+from conftest import FakeFalkorDBStore, FakeMemgraphStore, FakeNeo4jStore, FakeStructuredStore
 
 from ogre_kg.kg_processors.graph_db_utils import (
+    FalkorDBFulltextIndexBuilder,
     GraphTextIndexSpec,
     MemgraphTextIndexBuilder,
     Neo4jFulltextIndexBuilder,
@@ -174,9 +175,38 @@ def test_neo4j_builder_drop_query_uses_if_exists() -> None:
     ]
 
 
+def test_falkordb_builder_creates_fulltext_indices_with_expected_syntax() -> None:
+    store = FakeFalkorDBStore()
+    builder = FalkorDBFulltextIndexBuilder(source=store)
+
+    builder.create_indices()
+
+    assert store.queries == [
+        "CALL db.idx.fulltext.createNodeIndex('__Entity__', 'name')",
+        "CALL db.idx.fulltext.createNodeIndex('Chunk', 'text')",
+    ]
+
+
+def test_falkordb_builder_drop_query_uses_expected_syntax() -> None:
+    store = FakeFalkorDBStore()
+    builder = FalkorDBFulltextIndexBuilder(source=store)
+
+    builder.drop_indices(index_names=["__Entity__", "Chunk"], if_exists=True)
+
+    assert store.queries == [
+        "CALL db.idx.fulltext.drop('__Entity__')",
+        "CALL db.idx.fulltext.drop('Chunk')",
+    ]
+
+
 def test_make_graph_text_index_builder_resolves_memgraph() -> None:
     builder = make_graph_text_index_builder(FakeMemgraphStore())
     assert isinstance(builder, MemgraphTextIndexBuilder)
+
+
+def test_make_graph_text_index_builder_resolves_falkordb() -> None:
+    builder = make_graph_text_index_builder(FakeFalkorDBStore())
+    assert isinstance(builder, FalkorDBFulltextIndexBuilder)
 
 
 def test_make_graph_text_index_builder_resolves_neo4j() -> None:

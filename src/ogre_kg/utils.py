@@ -10,6 +10,7 @@ from typing import Any, Protocol
 class GraphStoreBackend(Enum):
     """Supported property graph store backends."""
 
+    FALKORDB = "falkordb"
     MEMGRAPH = "memgraph"
     NEO4J = "neo4j"
 
@@ -77,7 +78,7 @@ def detect_graph_store_backend(store: Any) -> GraphStoreBackend:
     """Detect the backend type from a graph store instance.
 
     Inspects the class name and module path to determine whether the store
-    is a Memgraph or Neo4j backend.
+    is a FalkorDB, Memgraph, or Neo4j backend.
 
     Parameters
     ----------
@@ -97,6 +98,8 @@ def detect_graph_store_backend(store: Any) -> GraphStoreBackend:
     class_name = type(store).__name__
     module = type(store).__module__
 
+    if "falkordb" in module.lower() or "FalkorDB" in class_name:
+        return GraphStoreBackend.FALKORDB
     if "memgraph" in module.lower() or "Memgraph" in class_name:
         return GraphStoreBackend.MEMGRAPH
     if "neo4j" in module.lower() or "Neo4j" in class_name:
@@ -104,7 +107,7 @@ def detect_graph_store_backend(store: Any) -> GraphStoreBackend:
 
     raise ValueError(
         f"Cannot detect backend for store type '{class_name}' "
-        f"from module '{module}'. Expected a Memgraph or Neo4j store."
+        f"from module '{module}'. Expected a FalkorDB, Memgraph, or Neo4j store."
     )
 
 

@@ -14,6 +14,7 @@ authors = [
 dependencies = [
     "llama-index>=0.14.14",
     "llama-index-embeddings-huggingface>=0.6.1",
+    "llama-index-graph-stores-falkordb>=0.5.0",
     "llama-index-graph-stores-memgraph>=0.4.1",
     "llama-index-llms-openrouter>=0.3.0",
     "llama-index-readers-wikipedia>=0.5.0",

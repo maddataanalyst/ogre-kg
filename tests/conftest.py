@@ -11,7 +11,7 @@ import pytest
 class FakeStructuredStore:
     """Fake graph store supporting structured queries for testing.
 
-    Backend-agnostic — use ``FakeMemgraphStore`` or ``FakeNeo4jStore`` when
+    Backend-agnostic — use ``FakeFalkorDBStore``, ``FakeMemgraphStore``, or ``FakeNeo4jStore`` when
     backend detection is required.
     """
 
@@ -34,7 +34,11 @@ class FakeStructuredStore:
 
     def structured_query(self, query: str) -> list[dict]:
         self.queries.append(query)
-        if "node_similarity.cosine" in query or "vector.similarity" in query:
+        if (
+            "node_similarity.cosine" in query
+            or "vector.similarity" in query
+            or "vec.cosineDistance" in query
+        ):
             return self.similarity_pairs
         if "refactor.merge_nodes" in query or "apoc.refactor.mergeNodes" in query:
             return self.merge_result
@@ -44,6 +48,11 @@ class FakeStructuredStore:
 
     async def astructured_query(self, query: str) -> list[dict]:
         return self.structured_query(query)
+
+
+@dataclass
+class FakeFalkorDBStore(FakeStructuredStore):
+    """Fake FalkorDB store — detected as FALKORDB by ``detect_graph_store_backend``."""
 
 
 @dataclass
@@ -66,6 +75,11 @@ class FakeIndex:
 @pytest.fixture
 def fake_store() -> FakeStructuredStore:
     return FakeStructuredStore()
+
+
+@pytest.fixture
+def fake_falkordb_store() -> FakeFalkorDBStore:
+    return FakeFalkorDBStore()
 
 
 @pytest.fixture

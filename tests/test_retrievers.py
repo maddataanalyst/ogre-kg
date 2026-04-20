@@ -10,6 +10,8 @@ from llama_index.core.prompts import PromptTemplate
 from llama_index.core.schema import QueryBundle
 
 from ogre_kg.kg_processors.retrievers import (
+    FalkorDBChunkKeywordRetriever,
+    FalkorDBKeywordContextRetriever,
     MemgraphChunkKeywordRetriever,
     MemgraphKeywordContextRetriever,
     Neo4jChunkKeywordRetriever,
@@ -236,6 +238,39 @@ class FakeNeo4jStructuredStore(FakeStructuredStore):
         if (
             "db.index.fulltext.queryNodes" in query
             and '"entity_name", $search_query, {limit: $topk}' in query
+            and (param_map or {}).get("search_query") == "Edison"
+        ):
+            return [
+                {"node_id": "entity_common", "score": 0.8},
+                {"node_id": "entity_edison", "score": 0.1},
+            ]
+        return []
+
+
+@dataclass
+class FakeFalkorDBStructuredStore(FakeStructuredStore):
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        self.param_maps: list[dict[str, Any] | None] = []
+
+    def structured_query(
+        self,
+        query: str,
+        param_map: dict[str, Any] | None = None,
+    ) -> list[dict[str, Any]]:
+        self.queries.append(query)
+        self.param_maps.append(param_map)
+
+        if (
+            "db.idx.fulltext.queryNodes('__Entity__', $search_query)" in query
+            and (param_map or {}).get("search_query") == "Tesla"
+        ):
+            return [
+                {"node_id": "entity_tesla", "score": 0.2},
+                {"node_id": "entity_common", "score": 0.3},
+            ]
+        if (
+            "db.idx.fulltext.queryNodes('__Entity__', $search_query)" in query
             and (param_map or {}).get("search_query") == "Edison"
         ):
             return [
@@ -508,6 +543,123 @@ class FakeNeo4jChunkFirstStore(FakeStructuredStore):
         ]
 
 
+@dataclass
+class FakeFalkorDBChunkFirstStore(FakeStructuredStore):
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        self.param_maps: list[dict[str, Any] | None] = []
+
+    def structured_query(
+        self,
+        query: str,
+        param_map: dict[str, Any] | None = None,
+    ) -> list[dict[str, Any]]:
+        self.queries.append(query)
+        self.param_maps.append(param_map)
+
+        if "db.idx.fulltext.queryNodes('Chunk', $search_query)" in query:
+            search_query = (param_map or {}).get("search_query", "")
+            if search_query == "basal cell":
+                return [
+                    {"node_id": "chunk_a", "score": 0.6},
+                    {"node_id": "chunk_b", "score": 0.3},
+                ]
+            if search_query == "treatment":
+                return [
+                    {"node_id": "chunk_a", "score": 0.9},
+                    {"node_id": "chunk_c", "score": 0.4},
+                ]
+            return []
+
+        if "MATCH (c:Chunk)-[r]->(e:__Entity__)" in query:
+            chunk_ids = set((param_map or {}).get("chunk_ids", []))
+            rows: list[dict[str, str]] = []
+            if "chunk_a" in chunk_ids:
+                rows.append({"node_id": "entity_shared", "chunk_id": "chunk_a"})
+            if "chunk_b" in chunk_ids:
+                rows.append({"node_id": "entity_shared", "chunk_id": "chunk_b"})
+                rows.append({"node_id": "entity_from_b", "chunk_id": "chunk_b"})
+            if "chunk_c" in chunk_ids:
+                rows.append({"node_id": "entity_from_c", "chunk_id": "chunk_c"})
+            return rows
+
+        return []
+
+    async def astructured_query(
+        self,
+        query: str,
+        param_map: dict[str, Any] | None = None,
+    ) -> list[dict[str, Any]]:
+        return self.structured_query(query=query, param_map=param_map)
+
+    def get(
+        self,
+        properties: dict[str, Any] | None = None,
+        ids: list[str] | None = None,
+    ) -> list[EntityNode]:
+        del properties
+        ids = ids or []
+        self.get_calls.append(ids)
+        return [EntityNode(name=node_id, label="Entity") for node_id in ids]
+
+    def get_rel_map(
+        self,
+        graph_nodes: list[EntityNode],
+        depth: int = 2,
+        limit: int = 30,
+        ignore_rels: list[str] | None = None,
+    ) -> list[tuple[EntityNode, Relation, EntityNode]]:
+        self.rel_map_calls.append(
+            {
+                "ids": [node.id for node in graph_nodes],
+                "depth": depth,
+                "limit": limit,
+                "ignore_rels": ignore_rels or [],
+            }
+        )
+        return [
+            (
+                EntityNode(
+                    name="entity_shared",
+                    label="Entity",
+                    properties={"triplet_source_id": "chunk_a"},
+                ),
+                Relation(
+                    label="RELATED_TO",
+                    source_id="entity_shared",
+                    target_id="entity_t",
+                ),
+                EntityNode(name="entity_t", label="Entity"),
+            ),
+            (
+                EntityNode(
+                    name="entity_from_b",
+                    label="Entity",
+                    properties={"triplet_source_id": "chunk_b"},
+                ),
+                Relation(
+                    label="ASSOCIATED_WITH",
+                    source_id="entity_from_b",
+                    target_id="entity_u",
+                ),
+                EntityNode(name="entity_u", label="Entity"),
+            ),
+            (
+                EntityNode(
+                    name="entity_from_c",
+                    label="Entity",
+                    properties={"triplet_source_id": "chunk_c"},
+                ),
+                Relation(
+                    label="LINKED_TO",
+                    source_id="entity_from_c",
+                    target_id="entity_w",
+                ),
+                EntityNode(name="entity_w", label="Entity"),
+            ),
+        ]
+
+
 def test_memgraph_retriever_sync_uses_seed_search_then_rel_map():
     store = FakeStructuredStore()
     retriever = MemgraphKeywordContextRetriever(
@@ -726,6 +878,45 @@ def test_neo4j_retriever_escapes_keyword_for_fulltext_query():
         "search_query": r"Definition of learning \(Mitchell\) \/ machine learning\?",
         "topk": 3,
     }
+
+
+def test_falkordb_retriever_uses_fulltext_seed_query_and_descending_scores():
+    store = FakeFalkorDBStructuredStore()
+    retriever = FalkorDBKeywordContextRetriever(
+        graph_store=store,
+        llm=FakeLLM(),
+        topk_search=4,
+        path_depth=1,
+        path_limit=9,
+    )
+    query_bundle = QueryBundle(query_str="Who collaborated with Tesla?")
+
+    nodes = retriever.retrieve_from_graph(query_bundle)
+
+    assert len(nodes) == 2
+    assert "db.idx.fulltext.queryNodes('__Entity__', $search_query)" in store.queries[0]
+    assert store.param_maps[0] == {"search_query": "Tesla", "topk": 4}
+    assert store.param_maps[1] == {"search_query": "Edison", "topk": 4}
+    assert nodes[0].score == 0.8
+    assert nodes[1].score == 0.1
+
+
+@pytest.mark.asyncio
+async def test_falkordb_retriever_async_uses_fulltext_seed_query():
+    store = FakeFalkorDBStructuredStore()
+    retriever = FalkorDBKeywordContextRetriever(
+        graph_store=store,
+        llm=FakeLLM(),
+        topk_search=2,
+    )
+
+    nodes = await retriever.aretrieve_from_graph(
+        QueryBundle(query_str="Who collaborated with Tesla?")
+    )
+
+    assert len(nodes) == 2
+    assert store.param_maps[0] == {"search_query": "Tesla", "topk": 2}
+    assert store.param_maps[1] == {"search_query": "Edison", "topk": 2}
 
 
 def test_memgraph_chunk_retriever_uses_terms_per_term_topk_and_chunk_dedup():
@@ -1046,3 +1237,53 @@ def test_neo4j_chunk_retriever_requires_non_empty_chunk_link_rels():
             llm=FakeLLM(),
             chunk_link_rels=(),
         )
+
+
+def test_falkordb_chunk_retriever_uses_terms_per_term_topk_and_chunk_dedup():
+    store = FakeFalkorDBChunkFirstStore()
+    llm = FakeLLM(chunk_terms=["basal cell", "treatment"])
+    retriever = FalkorDBChunkKeywordRetriever(
+        graph_store=store,
+        llm=llm,
+        topk_search=3,
+        path_depth=2,
+        path_limit=10,
+        chunk_link_rels=("MENTIONS", "HAS_ENTITY"),
+    )
+
+    nodes = retriever.retrieve_from_graph(QueryBundle(query_str="basal cell treatment options"))
+
+    assert len(nodes) == 3
+    assert "db.idx.fulltext.queryNodes('Chunk', $search_query)" in store.queries[0]
+    assert store.param_maps[0] == {"search_query": "basal cell", "topk": 3}
+    assert store.param_maps[1] == {"search_query": "treatment", "topk": 3}
+    assert store.param_maps[2] == {
+        "chunk_ids": ["chunk_a", "chunk_b", "chunk_c"],
+        "allowed_rels": ["MENTIONS", "HAS_ENTITY"],
+    }
+    assert nodes[0].score == 0.9
+    assert nodes[1].score == 0.4
+    assert nodes[2].score == 0.3
+
+
+@pytest.mark.asyncio
+async def test_falkordb_chunk_retriever_async_chunk_first_pipeline():
+    store = FakeFalkorDBChunkFirstStore()
+    retriever = FalkorDBChunkKeywordRetriever(
+        graph_store=store,
+        llm=FakeLLM(),
+        topk_search=2,
+        chunk_link_rels=("MENTIONS",),
+    )
+
+    nodes = await retriever.aretrieve_from_graph(
+        QueryBundle(query_str="basal cell treatment options")
+    )
+
+    assert len(nodes) == 3
+    assert store.param_maps[0] == {"search_query": "basal cell", "topk": 2}
+    assert store.param_maps[1] == {"search_query": "treatment", "topk": 2}
+    assert store.param_maps[2] == {
+        "chunk_ids": ["chunk_a", "chunk_b", "chunk_c"],
+        "allowed_rels": ["MENTIONS"],
+    }

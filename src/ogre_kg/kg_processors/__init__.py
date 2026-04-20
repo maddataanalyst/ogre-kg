@@ -11,6 +11,7 @@ from ogre_kg.kg_processors.extractors import (
     TabularTableSpec,
 )
 from ogre_kg.kg_processors.graph_db_utils import (
+    FalkorDBFulltextIndexBuilder,
     GraphTextIndexBuilder,
     GraphTextIndexSpec,
     MemgraphTextIndexBuilder,
@@ -22,6 +23,8 @@ from ogre_kg.kg_processors.retrievers import (
     DEFAULT_CHUNK_TERMS_PROMPT,
     DEFAULT_KEYWORD_PROMPT,
     BaseGraphKeywordRetriever,
+    FalkorDBChunkKeywordRetriever,
+    FalkorDBKeywordContextRetriever,
     MemgraphChunkKeywordRetriever,
     MemgraphKeywordContextRetriever,
     Neo4jChunkKeywordRetriever,
@@ -35,6 +38,9 @@ __all__ = [
     "DEFAULT_ONTO_DYNAMIC_EXTRACT_PROMPT",
     "DEFAULT_ONTO_DYNAMIC_EXTRACT_PROPS_PROMPT",
     "DEFAULT_ONTOLOGY_RELATION_TYPES",
+    "FalkorDBChunkKeywordRetriever",
+    "FalkorDBFulltextIndexBuilder",
+    "FalkorDBKeywordContextRetriever",
     "ForeignKeySpec",
     "GraphTextIndexBuilder",
     "GraphTextIndexSpec",
